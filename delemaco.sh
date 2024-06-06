@@ -2,7 +2,6 @@
 
 # Configuration
 SERVER="delemaco"  # Server to ping
-#wakeonlan b8:cb:29:a1:f3:88
 echo "Content-type: text/html"
 echo
 # Function to ping the server and generate HTML output
@@ -18,7 +17,6 @@ generate_html() {
     else
         status="Offline"
         color="red"
-        wakeonlan b8:cb:29:a1:f3:88
     fi
 
     # Generate HTML content
