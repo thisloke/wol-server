@@ -1,10 +1,25 @@
 #!/bin/bash
 
+SERVER="delemaco"  # Server to ping
+
 echo "Content-type: text/html"
 echo
 # Function to ping the server and generate HTML output
 generate_html() {
-    wakeonlan b8:cb:29:a1:f3:88
+    local server=$1
+
+    # Ping the server (send 1 packet and wait for 1 second)
+     ping -c 1 -W 1 "$server" > /dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        status="Online"
+        color="green"
+    else
+        status="Booting"
+        color="gray"
+        wakeonlan b8:cb:29:a1:f3:88
+    fi
+
+    
     # Generate HTML content
     HTML_CONTENT=$(cat <<EOL
 <!DOCTYPE html>
@@ -15,7 +30,7 @@ generate_html() {
     <title>Server Status</title>
     <style>
         body {
-            background-color: black;
+            background-color: $color;
             font-family: Arial, sans-serif;
             display: flex;
             justify-content: center;
@@ -31,7 +46,7 @@ generate_html() {
 </head>
 <body>
     <div class="status">
-        Server <strong>is booting.
+        Server <strong>$server</strong> is currently $status.
     </div>
 </body>
 </html>
