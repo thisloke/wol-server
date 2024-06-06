@@ -56,7 +56,7 @@ EOL
 }
 
 # Run the function and save the output to a variable
-HTML_OUTPUT=$(generate_html)
+HTML_OUTPUT=$(generate_html "$SERVER")
 
 # Print the HTML content
 echo "$HTML_OUTPUT"
