@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "startTime": "",
+  "endTime": "",
+  "frequency": "daily",
+  "lastRun": "",
+  "autoShutdown": false,
+  "startedBySchedule": false
+}
