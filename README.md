@@ -1,66 +1,105 @@
-![Server Status Screenshot](https://placeholder-for-screenshot.png)
+# WOL-Server
+
+A lightweight Wake-on-LAN (WOL) server application designed specifically for Raspberry Pi devices. This tool allows you to remotely power on your network devices using magic packets through a simple, user-friendly interface.
 
 ## Features
 
-- **Status Monitoring**: Real-time status checks to determine if your server is online or offline
-- **Wake-on-LAN**: Boot your server remotely with the click of a button
-- **Remote Shutdown**: Safely shut down your server when it's not needed
-- **Responsive UI**: Simple, mobile-friendly interface with color-coded status indicators
-- **Lightweight**: Built with Go for minimal resource usage, perfect for Raspberry Pi Zero
-
-## Requirements
-
-- Raspberry Pi (Zero, 2, 3, 4, etc.)
-- Go (version 1.16 or higher)
-- wakeonlan utility
-- SSH access to the target server (for shutdown functionality)
-- Target server configured for Wake-on-LAN
+- **Cross-Platform Compatibility**: Optimized for various Raspberry Pi models (Zero, 1, 2, 3, 4)
+- **Easy Installation**: Automated deployment script for quick setup
+- **Systemd Integration**: Runs as a system service for reliability
+- **Simple Web Interface**: Control your devices through an intuitive web UI
+- **Configurable**: Easily customize settings through environment variables or `.env` file
+- **Low Resource Usage**: Minimal footprint to run efficiently on any Pi
 
 ## Installation
 
-### 1. Install Dependencies
+### Method 1: Pre-built Release (Recommended)
+
+1. **Check which binary is right for your Raspberry Pi model**:
+   ```bash
+   uname -m
+   ```
+   - `armv6l`: Use `wol-server-arm6` (Pi Zero, Pi 1)
+   - `armv7l`: Use `wol-server-arm7` (Pi 2, Pi 3 32-bit)
+   - `aarch64`: Use `wol-server-arm64` (Pi 3/4 64-bit)
+
+2. **Download the latest release**:
+
+   Navigate to [Releases](https://github.com/thisloke/wol-server/releases) and download the appropriate files for your Pi, or use the following commands:
+
+   ```bash
+   # Create a directory for installation
+   mkdir -p ~/wol-install
+   cd ~/wol-install
+
+   # Download the executable (replace v6 with the latest version number)
+   wget https://github.com/thisloke/wol-server/releases/download/v6/wol-server-arm6
+
+   # Download the service file
+   wget https://github.com/thisloke/wol-server/releases/download/v6/wol-server.service
+
+   # Download the deploy script
+   wget https://github.com/thisloke/wol-server/releases/download/v6/deploy.sh
+
+   # Make files executable
+   chmod +x wol-server-arm6
+   chmod +x deploy.sh
+   ```
+
+3. **Create a `.env` file for configuration**:
+   ```bash
+   cat > .env << EOL
+   # Server Configuration
+   SERVER_NAME=pippo
+   SERVER_USER=root
+   MAC_ADDRESS=aa:aa:aa:aa:aa:aa
+   PORT=8080
+   EOL
+   ```
+
+4. **Run the deployment script**:
+   ```bash
+   ./deploy.sh
+   ```
+
+### Method 2: Build from Source
+
+If you prefer to build the application from source:
 
 ```bash
+# Install Go (if not already installed)
 sudo apt update
-sudo apt install golang-go wakeonlan
-```
+sudo apt install golang-go
 
-### 2. Clone the Repository
-
-```bash
-git clone https://github.com/yourusername/wol-server.git
+# Clone the repository
+git clone https://github.com/thisloke/wol-server.git
 cd wol-server
-```
 
-### 3. Configure the Application
+# Install dependencies
+go get github.com/joho/godotenv
 
-Edit the constants in `main.go` to match your server:
+# Create a .env file for configuration
+cat > .env << EOL
+# Server Configuration
+SERVER_NAME=pippo
+SERVER_USER=root
+MAC_ADDRESS=aa:aa:aa:aa:aa:aa
+PORT=8080
+EOL
 
-```go
-const (
-    serverName = "yourserver"     // Hostname or IP address of your server
-    macAddress = "xx:xx:xx:xx:xx:xx"  // MAC address of your server's network interface
-    port       = "8080"           // Port to run the web application on
-)
-```
-
-### 4. Build the Application
-
-```bash
+# Build the application
 go build -o wol-server
-```
 
-### 5. Set Up as a System Service
+# Create installation directory
+mkdir -p ~/wol-server
 
-Create a systemd service file:
+# Copy the binary and config
+cp wol-server ~/wol-server/
+cp .env ~/wol-server/
+chmod +x ~/wol-server/wol-server
 
-```bash
-sudo nano /etc/systemd/system/wol-server.service
-```
-
-Add the following content (adjust paths if needed):
-
-```
+# Create and install systemd service
+sudo bash -c 'cat > /etc/systemd/system/wol-server.service << EOL
 [Unit]
 Description=WOL Server Go Application
 After=network.target
@@ -73,75 +112,182 @@ Restart=always
 
 [Install]
 WantedBy=multi-user.target
-```
+EOL'
 
-Enable and start the service:
-
-```bash
+# Enable and start the service
+sudo systemctl daemon-reload
 sudo systemctl enable wol-server
 sudo systemctl start wol-server
 ```
 
-## SSH Configuration for Remote Shutdown
+### Method 3: Manual Installation
 
-For the shutdown functionality to work, you need to set up password-less SSH:
+If you encounter issues with the deployment script:
 
-1. Generate an SSH key on your Raspberry Pi:
-   ```bash
-   ssh-keygen -t rsa
-   ```
+```bash
+# Create the application directory
+mkdir -p ~/wol-server
 
-2. Copy the key to your target server:
-   ```bash
-   ssh-copy-id user@yourserver
-   ```
+# Copy the binary and rename it
+cp wol-server-arm6 ~/wol-server/wol-server
+chmod +x ~/wol-server/wol-server
 
-3. Configure sudo on the target server to allow password-less shutdown:
-   ```bash
-   # On the target server, run:
-   sudo visudo
+# Copy the .env file
+cp .env ~/wol-server/
 
-   # Add this line (replacing 'user' with your username):
-   user ALL=(ALL) NOPASSWD: /sbin/shutdown
-   ```
+# Install the service file
+sudo cp wol-server.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable wol-server
+sudo systemctl start wol-server
+```
+
+## Configuration
+
+WOL-server can be configured using environment variables or a `.env` file in the application directory.
+
+### Available Configuration Options
+
+| Environment Variable | Description | Default Value |
+|----------------------|-------------|---------------|
+| `SERVER_NAME` | Name of the server to ping/wake | `pippo` |
+| `SERVER_USER` | SSH username for remote commands | `root` |
+| `MAC_ADDRESS` | MAC address of the target server | `aa:aa:aa:aa:aa:aa` |
+| `PORT` | The port number for the web server | `8080` |
+
+### Customizing Your Configuration
+
+You can edit the `.env` file to modify the application's behavior:
+
+```bash
+# Navigate to the installation directory
+cd ~/wol-server
+
+# Edit the .env file
+nano .env
+```
+
+After modifying the configuration, restart the service:
+
+```bash
+sudo systemctl restart wol-server
+```
 
 ## Usage
 
-Access the web interface by navigating to `http://raspberry-pi-ip:8080` in your browser.
+Once installed, the WOL server will be accessible at:
+```
+http://your-pi-ip:8080
+```
+(or whatever port you've configured)
 
-The interface provides:
+### Using the Web Interface
 
-- Current server status (Online/Offline)
-- Boot button - sends a Wake-on-LAN magic packet to your server
-- Shutdown button - safely shuts down your server via SSH
-- Refresh button - manually updates the status display
+1. **Wake Server**: Click the "Boot" button to send a Wake-on-LAN magic packet to the configured MAC address
+2. **Shut Down Server**: Click the "Shutdown" button, confirm, and enter your password if required
+
+## Service Management
+
+Control the WOL server using standard systemd commands:
+
+```bash
+# Check service status
+sudo systemctl status wol-server
+
+# Stop the service
+sudo systemctl stop wol-server
+
+# Start the service
+sudo systemctl start wol-server
+
+# Restart the service
+sudo systemctl restart wol-server
+
+# View logs
+journalctl -u wol-server -f
+```
+
+## Updating to a New Version
+
+To update to a new version:
+
+```bash
+# Navigate to a temporary directory
+mkdir -p ~/wol-update
+cd ~/wol-update
+
+# Download the latest release (replace v7 with the latest version number)
+wget https://github.com/thisloke/wol-server/releases/download/v7/wol-server-arm6
+chmod +x wol-server-arm6
+
+# Stop the service
+sudo systemctl stop wol-server
+
+# Replace the binary
+cp wol-server-arm6 ~/wol-server/wol-server
+
+# Start the service
+sudo systemctl start wol-server
+
+# Clean up
+cd ~
+rm -rf ~/wol-update
+```
 
 ## Troubleshooting
 
-- **Server won't boot**:
-  - Verify that Wake-on-LAN is enabled in your server's BIOS/UEFI
-  - Confirm the MAC address is correct
-  - Check if your router blocks Wake-on-LAN packets
+### Checking Your Raspberry Pi Architecture
 
-- **Shutdown doesn't work**:
-  - Verify SSH key setup
-  - Check sudo configuration on target server
-  - Test manual SSH command: `ssh user@server sudo shutdown -h now`
+If you need to verify which version of the application you should use:
 
-- **Web interface not accessible**:
-  - Ensure the service is running: `sudo systemctl status wol-server`
-  - Check for firewall rules blocking port 8080
-  - Verify the Raspberry Pi is connected to the network
+```bash
+uname -m
+```
+
+This will output your Pi's architecture:
+- `armv6l`: Use the `wol-server-arm6` binary (Pi Zero, Pi 1)
+- `armv7l`: Use the `wol-server-arm7` binary (Pi 2, Pi 3)
+- `aarch64`: Use the `wol-server-arm64` binary (64-bit Pi 3, Pi 4)
+
+### Service Not Starting
+
+If the service doesn't start properly, check the logs:
+
+```bash
+journalctl -u wol-server -e
+```
+
+### Checking Configuration
+
+Verify that your configuration is being properly loaded:
+
+```bash
+# View the environment variables being used
+sudo systemctl status wol-server
+```
+
+Look for a line in the output that shows the loaded configuration values.
+
+### Permission Issues
+
+Make sure the binary has execute permissions:
+
+```bash
+chmod +x ~/wol-server/wol-server
+```
+
+### Can't Download Release Files
+
+If you're having trouble downloading the release files directly, you can also:
+
+1. Download the files on your computer
+2. Transfer them to your Raspberry Pi using SCP, SFTP, or a USB drive
+3. Continue with the installation steps as described above
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Feel free to submit pull requests or open issues for bugs and feature requests.
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- Inspired by the need for a simple, lightweight server power management tool
-- Thanks to the Go community for the excellent standard library that makes web development straightforward

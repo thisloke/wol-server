@@ -87,15 +87,21 @@ jobs:
 
     - name: Create archive for each platform
       run: |
+        # Create templates directory in the package directories
+        mkdir -p armv6-package/templates
+        mkdir -p all-package/templates
+
+        # Copy template files
+        cp templates/* armv6-package/templates/
+        cp templates/* all-package/templates/
+
         # ARMv6 package
-        mkdir -p armv6-package
         cp wol-server-arm6 armv6-package/wol-server-arm6
         cp wol-server.service armv6-package/
         cp deploy.sh armv6-package/
         tar -czf wol-server-armv6.tar.gz -C armv6-package .
 
         # All-in-one package
-        mkdir -p all-package
         cp wol-server-arm6 all-package/
         cp wol-server.service all-package/
         cp deploy.sh all-package/
