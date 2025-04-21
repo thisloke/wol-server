@@ -1,0 +1,120 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Cross-compile for Raspberry Pi
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.20'
+
+    - name: Build for ARM (Pi Zero, Pi 1 - ARMv6)
+      run: |
+        GOOS=linux GOARCH=arm GOARM=6 go build -ldflags="-s -w" -o wol-server-arm6
+
+    - name: Create systemd service file
+      run: |
+        cat > wol-server.service << 'EOL'
+        [Unit]
+        Description=WOL Server Go Application
+        After=network.target
+
+        [Service]
+        User=pi
+        WorkingDirectory=/home/pi/wol-server
+        ExecStart=/home/pi/wol-server/wol-server
+        Restart=always
+
+        [Install]
+        WantedBy=multi-user.target
+        EOL
+
+    - name: Create deployment script
+      run: |
+        cat > deploy.sh << 'EOL'
+        #!/bin/bash
+
+        # Detect Raspberry Pi model and use the appropriate binary
+        MODEL=$(cat /proc/cpuinfo | grep "Model" | sed 's/Model\s*:\s*//g')
+        echo "Detected model: $MODEL"
+
+        # Select the right binary based on processor architecture
+        ARCH=$(uname -m)
+        echo "Architecture: $ARCH"
+
+        if [[ "$ARCH" == "aarch64" ]]; then
+            echo "Using ARM64 binary"
+            cp wol-server-arm64 wol-server
+        elif [[ "$ARCH" == "armv7l" ]]; then
+            echo "Using ARMv7 binary"
+            cp wol-server-arm7 wol-server
+        else
+            echo "Using ARMv6 binary"
+            cp wol-server-arm6 wol-server
+        fi
+
+        echo "Creating directory..."
+        mkdir -p ~/wol-server
+
+        echo "Copying application..."
+        cp wol-server ~/wol-server/
+        chmod +x ~/wol-server/wol-server
+
+        echo "Installing service..."
+        sudo cp wol-server.service /etc/systemd/system/
+        sudo systemctl daemon-reload
+        sudo systemctl enable wol-server
+        sudo systemctl restart wol-server
+
+        echo "Deployment complete!"
+        echo "Service status:"
+        sudo systemctl status wol-server
+        EOL
+
+        chmod +x deploy.sh
+
+    - name: Create archive for each platform
+      run: |
+        # ARMv6 package
+        mkdir -p armv6-package
+        cp wol-server-arm6 armv6-package/wol-server-arm6
+        cp wol-server.service armv6-package/
+        cp deploy.sh armv6-package/
+        tar -czf wol-server-armv6.tar.gz -C armv6-package .
+
+        # All-in-one package
+        mkdir -p all-package
+        cp wol-server-arm6 all-package/
+        cp wol-server.service all-package/
+        cp deploy.sh all-package/
+        tar -czf wol-server-all.tar.gz -C all-package .
+
+    - name: Create Release
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      if: github.ref == 'refs/heads/main'
+      with:
+        tag_name: v${{ github.run_number }}
+        name: Release v${{ github.run_number }}
+        draft: false
+        prerelease: false
+        files: |
+          wol-server-arm6
+          wol-server.service
+          deploy.sh
+          wol-server-armv6.tar.gz
+          wol-server-all.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
