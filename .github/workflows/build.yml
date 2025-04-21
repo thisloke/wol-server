@@ -43,63 +43,152 @@ jobs:
 
     - name: Create deployment script
       run: |
-        cat > deploy.sh << 'EOL'
+        cat > install.sh << 'EOL'
         #!/bin/bash
+        set -e
 
-        # Detect Raspberry Pi model and use the appropriate binary
-        MODEL=$(cat /proc/cpuinfo | grep "Model" | sed 's/Model\s*:\s*//g')
-        echo "Detected model: $MODEL"
+        # Installation directory
+        INSTALL_DIR=~/wol-server
 
-        # Select the right binary based on processor architecture
-        ARCH=$(uname -m)
-        echo "Architecture: $ARCH"
+        echo "Creating installation directory..."
+        mkdir -p $INSTALL_DIR
+        mkdir -p $INSTALL_DIR/templates
 
-        if [[ "$ARCH" == "aarch64" ]]; then
-            echo "Using ARM64 binary"
-            cp wol-server-arm64 wol-server
-        elif [[ "$ARCH" == "armv7l" ]]; then
-            echo "Using ARMv7 binary"
-            cp wol-server-arm7 wol-server
-        else
-            echo "Using ARMv6 binary"
-            cp wol-server-arm6 wol-server
-        fi
+        echo "Installing application..."
+        cp wol-server-arm6 $INSTALL_DIR/wol-server
+        chmod +x $INSTALL_DIR/wol-server
 
-        echo "Creating directory..."
-        mkdir -p ~/wol-server
+        echo "Installing template files..."
+        cp -r templates/* $INSTALL_DIR/templates/
 
-        echo "Copying application..."
-        cp wol-server ~/wol-server/
-        chmod +x ~/wol-server/wol-server
-
-        echo "Installing service..."
+        echo "Installing system service..."
         sudo cp wol-server.service /etc/systemd/system/
         sudo systemctl daemon-reload
         sudo systemctl enable wol-server
+
+        # Install required dependencies
+        echo "Installing dependencies..."
+        sudo apt-get update -qq
+        sudo apt-get install -y wakeonlan sshpass
+
+        # Start the service
+        echo "Starting service..."
         sudo systemctl restart wol-server
 
-        echo "Deployment complete!"
-        echo "Service status:"
-        sudo systemctl status wol-server
+        echo "==========================================="
+        echo "Installation complete!"
+        echo "The WOL server is now running at http://$(hostname -I | awk '{print $1}'):8080"
+        echo "==========================================="
         EOL
 
-        chmod +x deploy.sh
+        chmod +x install.sh
 
-    - name: Create archive for each platform
+    - name: Create README with installation instructions
       run: |
-        # ARMv6 package
-        mkdir -p armv6-package
-        cp wol-server-arm6 armv6-package/wol-server-arm6
-        cp wol-server.service armv6-package/
-        cp deploy.sh armv6-package/
-        tar -czf wol-server-armv6.tar.gz -C armv6-package .
+        cat > INSTALL.md << 'EOL'
+        # WOL Server Installation Guide
 
-        # All-in-one package
-        mkdir -p all-package
-        cp wol-server-arm6 all-package/
-        cp wol-server.service all-package/
-        cp deploy.sh all-package/
-        tar -czf wol-server-all.tar.gz -C all-package .
+        This guide will help you install the Wake-on-LAN server on your Raspberry Pi.
+
+        ## Prerequisites
+
+        - Raspberry Pi running Raspberry Pi OS (Raspbian)
+        - SSH access to your Pi
+        - SCP or SFTP capability to transfer files
+
+        ## Installation Steps
+
+        ### 1. Transfer Files to Raspberry Pi
+
+        **Option 1: Using SCP from your computer**
+
+        ```bash
+        # Replace with your Pi's IP address
+        PI_IP=192.168.1.100
+
+        # Transfer the installation package
+        scp wol-server.tar.gz pi@$PI_IP:~/
+        ```
+
+        **Option 2: Using SFTP client**
+
+        Use a tool like FileZilla, WinSCP, or Cyberduck to transfer the `wol-server.tar.gz` file to your Raspberry Pi.
+
+        ### 2. SSH into your Raspberry Pi
+
+        ```bash
+        ssh pi@192.168.1.100
+        ```
+
+        ### 3. Extract and Install
+
+        ```bash
+        # Navigate to home directory
+        cd ~
+
+        # Extract the archive
+        tar -xzf wol-server.tar.gz
+
+        # Run the installation script
+        ./install.sh
+        ```
+
+        ### 4. Test the Installation
+
+        Open a web browser and navigate to:
+        ```
+        http://[your-pi-ip]:8080
+        ```
+
+        ## Troubleshooting
+
+        If the service fails to start, check the logs:
+        ```bash
+        sudo systemctl status wol-server
+        ```
+
+        If template errors occur, ensure the template files were copied correctly:
+        ```bash
+        ls -la ~/wol-server/templates/
+        ```
+
+        ## Manual Installation (if needed)
+
+        If you encounter issues with the automated install:
+
+        ```bash
+        # Create directories
+        mkdir -p ~/wol-server/templates
+
+        # Copy files manually
+        cp wol-server-arm6 ~/wol-server/wol-server
+        chmod +x ~/wol-server/wol-server
+        cp templates/* ~/wol-server/templates/
+        sudo cp wol-server.service /etc/systemd/system/
+
+        # Install dependencies
+        sudo apt-get update
+        sudo apt-get install -y wakeonlan sshpass
+
+        # Enable and start service
+        sudo systemctl daemon-reload
+        sudo systemctl enable wol-server
+        sudo systemctl start wol-server
+        ```
+        EOL
+
+    - name: Create all-in-one package
+      run: |
+        # Create a single package with everything needed
+        mkdir -p package
+        cp wol-server-arm6 package/
+        cp wol-server.service package/
+        cp install.sh package/
+        cp -r templates package/
+        cp INSTALL.md package/
+
+        # Create the tarball
+        tar -czf wol-server.tar.gz -C package .
 
     - name: Create Release
       id: create_release
@@ -111,10 +200,7 @@ jobs:
         draft: false
         prerelease: false
         files: |
-          wol-server-arm6
-          wol-server.service
-          deploy.sh
-          wol-server-armv6.tar.gz
-          wol-server-all.tar.gz
+          wol-server.tar.gz
+          INSTALL.md
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

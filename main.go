@@ -1,417 +1,462 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
-	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
+	"time"
+
+	"github.com/joho/godotenv"
 )
 
-const (
-	serverName = "delemaco"  // Server to ping
-	macAddress = "b8:cb:29:a1:f3:88"  // MAC address of the server
-	port       = "8080"  // Port to listen on
+// Default values
+var (
+	serverName      = "server"            // Server to ping
+	serverUser      = "root"              // SSH username
+	macAddress      = "aa:aa:aa:aa:aa:aa" // MAC address of the server
+	port            = "8080"              // Port to listen on
+	refreshInterval = 60                  // UI refresh interval in seconds
 )
 
-// StatusData holds data for the HTML template
-type StatusData struct {
-	Server   string
-	Status   string
-	Color    string
-	IsTestMode bool
-}
-
-// Check if server is online
-func isServerOnline() bool {
-	var cmd *exec.Cmd
-
-	// macOS and Linux have slightly different ping commands
-	if runtime.GOOS == "darwin" {
-		cmd = exec.Command("ping", "-c", "1", "-W", "1000", serverName)
-	} else {
-		cmd = exec.Command("ping", "-c", "1", "-W", "1", serverName)
+func loadEnvVariables() {
+	// Load .env file if it exists
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using default values")
 	}
 
-	err := cmd.Run()
-	return err == nil
-}
-
-// Send WOL packet
-func sendWakeOnLAN() error {
-	log.Printf("Sending WOL packet to %s (%s)", serverName, macAddress)
-	cmd := exec.Command("wakeonlan", macAddress)
-	return cmd.Run()
-}
-
-// Shutdown server
-func shutdownServer() error {
-
-	// Real shutdown command for Linux
-	log.Printf("Sending shutdown command to %s", serverName)
-	cmd := exec.Command("ssh", serverName, "sudo", "shutdown", "-h", "now")
-	return cmd.Run()
-}
-
-// Handle the root route - show status
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
+	// Override defaults with environment variables if they exist
+	if envServerName := os.Getenv("SERVER_NAME"); envServerName != "" {
+		serverName = envServerName
 	}
 
-	online := isServerOnline()
-	status := "Online"
-	color := "#4caf50"  // Material green
-	if !online {
-		status = "Offline"
-		color = "#d32f2f"  // Material red
+	if envServerUser := os.Getenv("SERVER_USER"); envServerUser != "" {
+		serverUser = envServerUser
 	}
 
-	data := StatusData{
-		Server:   serverName,
-		Status:   status,
-		Color:    color,
-		IsTestMode: runtime.GOOS == "darwin",
+	if envMacAddress := os.Getenv("MAC_ADDRESS"); envMacAddress != "" {
+		macAddress = envMacAddress
 	}
 
-	renderTemplate(w, data)
-}
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		port = envPort
+	}
 
-// Handle boot request
-func bootHandler(w http.ResponseWriter, r *http.Request) {
-	if !isServerOnline() {
-		// Boot the server using wakeonlan
-		err := sendWakeOnLAN()
-		if err != nil {
-			log.Printf("Error booting server: %v", err)
+	// Load refresh interval if set
+	if envRefresh := os.Getenv("REFRESH_INTERVAL"); envRefresh != "" {
+		if val, err := strconv.Atoi(envRefresh); err == nil && val > 0 {
+			refreshInterval = val
 		}
-
-		// Display booting status
-		data := StatusData{
-			Server:   serverName,
-			Status:   "Booting",
-			Color:    "#607d8b",  // Material blue-gray
-			IsTestMode: runtime.GOOS == "darwin",
-		}
-		renderTemplate(w, data)
-	} else {
-		// Server is already online
-		data := StatusData{
-			Server:   serverName,
-			Status:   "Online",
-			Color:    "#4caf50",  // Material green
-			IsTestMode: runtime.GOOS == "darwin",
-		}
-		renderTemplate(w, data)
-	}
-}
-
-// Handle shutdown request
-func shutdownHandler(w http.ResponseWriter, r *http.Request) {
-	if isServerOnline() {
-		// Shutdown the server
-		err := shutdownServer()
-		if err != nil {
-			log.Printf("Error shutting down server: %v", err)
-		}
-
-		// Display shutting down status
-		data := StatusData{
-			Server:   serverName,
-			Status:   "Shutting down",
-			Color:    "#5d4037",  // Material brown
-			IsTestMode: runtime.GOOS == "darwin",
-		}
-		renderTemplate(w, data)
-	} else {
-		// Server is already offline
-		data := StatusData{
-			Server:   serverName,
-			Status:   "Offline",
-			Color:    "#d32f2f",  // Material red
-			IsTestMode: runtime.GOOS == "darwin",
-		}
-		renderTemplate(w, data)
-	}
-}
-
-// Render the HTML template
-func renderTemplate(w http.ResponseWriter, data StatusData) {
-	tmpl, err := template.New("status").Parse(`<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Server Status: {{.Server}}</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --primary-color: {{.Color}};
-            --text-color: white;
-            --shadow-color: rgba(0, 0, 0, 0.3);
-            --hover-color: rgba(255, 255, 255, 0.1);
-            --card-bg: rgba(0, 0, 0, 0.15);
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            background-color: var(--primary-color);
-            font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            color: var(--text-color);
-            padding: 20px;
-            transition: background-color 0.5s ease;
-            background-image: radial-gradient(circle at 10% 20%, rgba(255, 255, 255, 0.05) 0%, transparent 20%),
-                              radial-gradient(circle at 90% 80%, rgba(255, 255, 255, 0.05) 0%, transparent 20%);
-        }
-
-        .container {
-            max-width: 800px;
-            width: 100%;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-
-        .card {
-            background-color: var(--card-bg);
-            border-radius: 20px;
-            padding: 40px;
-            margin-bottom: 30px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-            backdrop-filter: blur(5px);
-            width: 100%;
-            max-width: 600px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .status-icon {
-            font-size: 48px;
-            margin-bottom: 20px;
-            text-align: center;
-        }
-
-        .status-text {
-            font-size: 2.5rem;
-            font-weight: 600;
-            text-align: center;
-            margin-bottom: 10px;
-            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-        }
-
-        .server-name {
-            font-size: 1.2rem;
-            text-align: center;
-            margin-bottom: 30px;
-            opacity: 0.9;
-        }
-
-        .controls {
-            display: flex;
-            gap: 15px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-
-        .button {
-            padding: 15px 25px;
-            font-size: 1rem;
-            font-weight: 600;
-            border: none;
-            border-radius: 50px;
-            cursor: pointer;
-            text-decoration: none;
-            color: var(--text-color);
-            background-color: var(--shadow-color);
-            transition: transform 0.2s ease, background-color 0.3s ease, box-shadow 0.3s ease;
-            min-width: 140px;
-            text-align: center;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-        }
-
-        .button:hover {
-            background-color: var(--hover-color);
-            transform: translateY(-3px);
-            box-shadow: 0 7px 14px rgba(0, 0, 0, 0.15);
-        }
-
-        .button:active {
-            transform: translateY(1px);
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-
-        .button::before {
-            content: '';
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            background-size: contain;
-            background-repeat: no-repeat;
-            background-position: center;
-        }
-
-        .button.refresh::before {
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' height='24' viewBox='0 -960 960 960' width='24' fill='white'%3E%3Cpath d='M480-160q-133 0-226.5-93.5T160-480q0-133 93.5-226.5T480-800q85 0 149 34.5T740-671v-99q0-13 8.5-21.5T770-800q13 0 21.5 8.5T800-770v194q0 13-8.5 21.5T770-546H576q-13 0-21.5-8.5T546-576q0-13 8.5-21.5T576-606h138q-38-60-97-97t-137-37q-109 0-184.5 75.5T220-480q0 109 75.5 184.5T480-220q59 0 111-25t89-69q8-9 20.5-10t21.5 7q9 8 10 20t-7 22q-45 53-112 86.5T480-160Z'/%3E%3C/svg%3E");
-        }
-
-        .button.boot::before {
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' height='24' viewBox='0 -960 960 960' width='24' fill='white'%3E%3Cpath d='M480-120q-151 0-255.5-104.5T120-480q0-138 89-239t219-120q20-3 33.5 9.5T480-797q4 20-9 35.5T437-748q-103 12-170 87t-67 181q0 124 88 212t212 88q124 0 212-88t88-212q0-109-69.5-184.5T564-748q-21-3-31.5-19T525-798q3-20 19-30.5t35-6.5q136 19 228.5 122.5T900-480q0 150-104.5 255T480-120Zm0-170q-20 0-33.5-14T433-340v-286q0-21 14-34.5t33-13.5q20 0 33.5 13.5T527-626v286q0 22-14 36t-33 14Z'/%3E%3C/svg%3E");
-        }
-
-        .button.shutdown::before {
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' height='24' viewBox='0 -960 960 960' width='24' fill='white'%3E%3Cpath d='M480-120q-151 0-255.5-104.5T120-480q0-138 89-239t219-120q20-3 33.5 9.5T480-797q4 20-9 35.5T437-748q-103 12-170 87t-67 181q0 124 88 212t212 88q124 0 212-88t88-212q0-109-69.5-184.5T564-748q-21-3-31.5-19T525-798q3-20 19-30.5t35-6.5q136 19 228.5 122.5T900-480q0 150-104.5 255T480-120Zm0-360Z'/%3E%3C/svg%3E");
-        }
-
-        .test-panel {
-            margin-top: 40px;
-            padding: 20px;
-            background-color: rgba(0, 0, 0, 0.3);
-            border-radius: 15px;
-            width: 100%;
-            max-width: 600px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .test-note {
-            color: white;
-            margin-bottom: 20px;
-            text-align: center;
-            font-size: 0.9rem;
-            opacity: 0.8;
-        }
-
-        .footer {
-            margin-top: 40px;
-            font-size: 0.8rem;
-            opacity: 0.7;
-            text-align: center;
-        }
-
-        /* Responsive adjustments */
-        @media (max-width: 600px) {
-            .card {
-                padding: 30px 20px;
-            }
-
-            .status-text {
-                font-size: 2rem;
-            }
-
-            .controls {
-                flex-direction: column;
-                width: 100%;
-            }
-
-            .button {
-                width: 100%;
-            }
-        }
-
-        /* Status-specific icons */
-        {{if eq .Status "Online"}}
-        .status-icon::before {
-            content: "✓";
-            color: #4caf50;
-        }
-        {{else if eq .Status "Offline"}}
-        .status-icon::before {
-            content: "✗";
-            color: #f44336;
-        }
-        {{else if eq .Status "Booting"}}
-        .status-icon::before {
-            content: "⟳";
-            color: #ffeb3b;
-            display: inline-block;
-            animation: spin 2s linear infinite;
-        }
-        {{else if eq .Status "Shutting down"}}
-        .status-icon::before {
-            content: "⏻";
-            color: #ff9800;
-        }
-        {{end}}
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="card">
-            <div class="status-icon"></div>
-            <h1 class="status-text">{{.Status}}</h1>
-            <div class="server-name">Server: <strong>{{.Server}}</strong></div>
-
-            <div class="controls">
-                <a href="/" class="button refresh">Refresh</a>
-                <a href="/boot" class="button boot">Boot</a>
-                <a href="/shutdown" class="button shutdown">Shutdown</a>
-            </div>
-        </div>
-
-        {{if .IsTestMode}}
-        <div class="test-panel">
-            <div class="test-note">
-                Running on macOS in test mode. Wake-on-LAN packets are sent, but remote shutdown is simulated.
-            </div>
-        </div>
-        {{end}}
-
-        <div class="footer">
-            Wake-on-LAN Server Control Panel
-        </div>
-    </div>
-</body>
-</html>`)
-
-	if err != nil {
-		http.Error(w, "Failed to load template", http.StatusInternalServerError)
-		log.Printf("Template error: %v", err)
-		return
 	}
 
-	err = tmpl.Execute(w, data)
-	if err != nil {
-		http.Error(w, "Failed to render template", http.StatusInternalServerError)
-		log.Printf("Template render error: %v", err)
-	}
+	log.Printf("Configuration loaded: SERVER_NAME=%s, SERVER_USER=%s, MAC_ADDRESS=%s, PORT=%s, REFRESH=%d",
+		serverName, serverUser, macAddress, port, refreshInterval)
 }
 
 func main() {
+	// Load environment variables
+	loadEnvVariables()
+
+	// Setup template
+	if err := setupTemplate(); err != nil {
+		log.Fatalf("Failed to setup template: %v", err)
+	}
+
+	// Verify schedule configuration and clean up stale schedule data if needed
+	verifyScheduleConfig()
+
+	// Setup a ticker to check schedule and perform actions
+	go runScheduleChecker()
+
 	// Register route handlers
 	http.HandleFunc("/", indexHandler)
 	http.HandleFunc("/boot", bootHandler)
+	http.HandleFunc("/confirm-shutdown", confirmShutdownHandler)
+	// Password is now taken directly from .env file
 	http.HandleFunc("/shutdown", shutdownHandler)
+
+	// Schedule API endpoints
+	http.HandleFunc("/api/schedule", scheduleHandler)
+	// API shutdown endpoint
+	http.HandleFunc("/api/shutdown", apiShutdownHandler)
 
 	// Start the server
 	listenAddr := fmt.Sprintf(":%s", port)
 	log.Printf("Starting WOL Server on http://localhost%s", listenAddr)
 
 	if runtime.GOOS == "darwin" {
-		log.Println("Running on macOS in test mode - remote shutdown commands will be simulated")
+		log.Println("Running on macOS - commands will be executed using the provided password")
 	}
 
 	if err := http.ListenAndServe(listenAddr, nil); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
+	}
+}
+
+// API Shutdown handler - shuts down the server with password from environment
+func apiShutdownHandler(w http.ResponseWriter, r *http.Request) {
+	// Add cache control headers to prevent caching
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	// Set content type for JSON response
+	w.Header().Set("Content-Type", "application/json")
+
+	// Only allow POST requests
+	if r.Method != "POST" {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Method not allowed. Use POST.",
+		})
+		return
+	}
+
+	// Check if shutdown password is available in environment
+	if shutdownPassword == "" {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "SHUTDOWN_PASSWORD not set in environment",
+		})
+		return
+	}
+
+	// Check if server is online before attempting shutdown
+	if !isServerOnline() {
+		// Server is already offline
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Server is already offline",
+		})
+		return
+	}
+
+	// Try to shut down the server using the password from environment
+	err := shutdownServer(shutdownPassword)
+	if err != nil {
+		// Shutdown command failed
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Failed to shutdown server: " + err.Error(),
+		})
+		log.Printf("API shutdown failed: %v", err)
+		return
+	}
+
+	// Shutdown initiated successfully
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Server shutdown initiated",
+	})
+	log.Printf("API shutdown successful")
+}
+
+// Handle schedule API requests
+func scheduleHandler(w http.ResponseWriter, r *http.Request) {
+	// Set content type
+	w.Header().Set("Content-Type", "application/json")
+
+	// Handle GET request - return current schedule
+	if r.Method == "GET" {
+		data, err := json.Marshal(GetScheduleConfig())
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error": "Failed to marshal schedule data: %v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		w.Write(data)
+		return
+	}
+
+	// Handle POST request - update schedule
+	if r.Method == "POST" {
+		var newConfig ScheduleConfig
+		err := json.NewDecoder(r.Body).Decode(&newConfig)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error": "Failed to parse request body: %v"}`, err), http.StatusBadRequest)
+			return
+		}
+
+		// Validate the schedule data
+		if newConfig.Enabled {
+			// Validate time format (HH:MM)
+			_, err = time.Parse("15:04", newConfig.StartTime)
+			if err != nil {
+				http.Error(w, `{"error": "Invalid start time format. Use 24-hour format (HH:MM)"}`, http.StatusBadRequest)
+				return
+			}
+
+			_, err = time.Parse("15:04", newConfig.EndTime)
+			if err != nil {
+				http.Error(w, `{"error": "Invalid end time format. Use 24-hour format (HH:MM)"}`, http.StatusBadRequest)
+				return
+			}
+
+			// Validate frequency
+			validFrequencies := map[string]bool{
+				"daily":      true,
+				"every2days": true,
+				"weekly":     true,
+				"monthly":    true,
+			}
+
+			if !validFrequencies[newConfig.Frequency] {
+				http.Error(w, `{"error": "Invalid frequency. Use 'daily', 'every2days', 'weekly', or 'monthly'"}`, http.StatusBadRequest)
+				return
+			}
+
+			// Reset lastRun if it wasn't set
+			if newConfig.LastRun == "" {
+				newConfig.LastRun = ""
+			}
+
+			// If auto shutdown is enabled, make sure we have a password in env
+			if newConfig.AutoShutdown && shutdownPassword == "" {
+				http.Error(w, `{"error": "SHUTDOWN_PASSWORD not set in environment. Please set it before enabling auto-shutdown"}`, http.StatusBadRequest)
+				return
+			}
+
+			// Check if SSH connection can be established with the password
+			if newConfig.AutoShutdown && shutdownPassword != "" {
+				log.Printf("Testing SSH connection to %s with provided password", serverName)
+
+				// We'll just check if the server is reachable first
+				if !isServerOnline() {
+					log.Printf("Server %s is not online, can't test SSH connection", serverName)
+				} else {
+					// Try to run a harmless command to test SSH connection
+					cmd := exec.Command("sshpass", "-p", shutdownPassword, "ssh",
+						"-o", "StrictHostKeyChecking=no",
+						"-o", "UserKnownHostsFile=/dev/null",
+						"-o", "LogLevel=ERROR",
+						"-o", "ConnectTimeout=5",
+						fmt.Sprintf("%s@%s", serverUser, serverName),
+						"echo", "SSH connection test successful")
+
+					var stderr bytes.Buffer
+					cmd.Stderr = &stderr
+
+					if err := cmd.Run(); err != nil {
+						log.Printf("SSH connection test failed: %v - %s", err, stderr.String())
+						// We don't prevent saving the config even if test fails
+						// Just log a warning for now
+						log.Printf("WARNING: Auto shutdown may not work with the provided password")
+					} else {
+						log.Printf("SSH connection test successful")
+					}
+				}
+			}
+		}
+
+		// Save the new configuration
+		err = UpdateScheduleConfig(newConfig)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error": "Failed to save schedule config: %v"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+		// Return the updated config
+		data, err := json.Marshal(GetScheduleConfig())
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error": "Failed to marshal schedule data: %v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		w.Write(data)
+		return
+	}
+
+	// Method not allowed
+	http.Error(w, `{"error": "Method not allowed"}`, http.StatusMethodNotAllowed)
+}
+
+// Verify and clean up schedule configuration
+func verifyScheduleConfig() {
+	// If schedule is enabled, validate all required fields
+	if scheduleConfig.Enabled {
+		log.Println("Verifying schedule configuration...")
+		log.Printf("Current config: StartTime=%s, EndTime=%s, Frequency=%s, AutoShutdown=%v",
+			scheduleConfig.StartTime, scheduleConfig.EndTime, scheduleConfig.Frequency, scheduleConfig.AutoShutdown)
+
+		// Check for valid time formats
+		_, startErr := time.Parse("15:04", scheduleConfig.StartTime)
+		_, endErr := time.Parse("15:04", scheduleConfig.EndTime)
+
+		if startErr != nil || endErr != nil || scheduleConfig.StartTime == "" || scheduleConfig.EndTime == "" {
+			log.Println("Warning: Invalid time format in schedule configuration, disabling schedule")
+			scheduleConfig.Enabled = false
+			UpdateScheduleConfig(scheduleConfig)
+			return
+		}
+
+		// Immediately check if we need to boot based on the current time
+		now := time.Now()
+		currentTimeStr := now.Format("15:04")
+
+		// Check if we're within the schedule window (between start and end time)
+		if currentTimeStr == scheduleConfig.StartTime {
+			log.Printf("STARTUP MATCH: Current time %s matches start time, attempting boot", currentTimeStr)
+			if !isServerOnline() {
+				sendWakeOnLAN()
+			}
+		} else if currentTimeStr > scheduleConfig.StartTime && currentTimeStr < scheduleConfig.EndTime {
+			log.Printf("STARTUP CHECK: Current time %s is within schedule window, checking server", currentTimeStr)
+			if !isServerOnline() {
+				log.Printf("Server should be online based on schedule - attempting boot")
+				sendWakeOnLAN()
+			}
+		}
+
+		// Check for valid frequency
+		validFrequencies := map[string]bool{
+			"daily":      true,
+			"every2days": true,
+			"weekly":     true,
+			"monthly":    true,
+		}
+
+		if !validFrequencies[scheduleConfig.Frequency] {
+			log.Println("Warning: Invalid frequency in schedule configuration, setting to daily")
+			scheduleConfig.Frequency = "daily"
+			UpdateScheduleConfig(scheduleConfig)
+		}
+
+		log.Printf("Schedule configuration verified: Start=%s, End=%s, Frequency=%s",
+			scheduleConfig.StartTime, scheduleConfig.EndTime, scheduleConfig.Frequency)
+	}
+}
+
+// Run a periodic check of schedule and take appropriate actions
+func runScheduleChecker() {
+	// Define the checkScheduleOnce function
+	checkScheduleOnce := func() {
+		// Check if server should be on according to schedule
+		shouldBeOn := CheckSchedule()
+		serverIsOn := isServerOnline()
+
+		// Log schedule status (debug level)
+		if scheduleConfig.Enabled {
+			log.Printf("Schedule check: Window active=%v, Server online=%v", shouldBeOn, serverIsOn)
+
+			// Force check the current time against the schedule time
+			now := time.Now()
+			currentTimeStr := now.Format("15:04")
+			if currentTimeStr == scheduleConfig.StartTime {
+				log.Printf("EXACT TIME MATCH! Current time %s equals start time", currentTimeStr)
+				shouldBeOn = true
+			} else if currentTimeStr == scheduleConfig.EndTime {
+				log.Printf("EXACT END TIME MATCH! Current time %s equals end time", currentTimeStr)
+				shouldBeOn = false
+			}
+		}
+
+		if shouldBeOn && !serverIsOn {
+			log.Println("Schedule: Server should be on but is offline. BOOT ATTEMPT INITIATED...")
+			// Try multiple times to boot with small delays between attempts
+			for attempt := 1; attempt <= 3; attempt++ {
+				log.Printf("Boot attempt %d/3", attempt)
+				err := sendWakeOnLAN()
+				if err != nil {
+					log.Printf("Error booting server from schedule: %v", err)
+				} else {
+					log.Println("Schedule: Boot command sent successfully")
+				}
+
+				// Check if server came online
+				time.Sleep(3 * time.Second) // Extended wait time for boot check
+				if isServerOnline() {
+					log.Println("Server successfully booted!")
+					break
+				}
+
+				// Short delay before next attempt
+				if attempt < 3 {
+					time.Sleep(1 * time.Second)
+				}
+			}
+		} else if !shouldBeOn && serverIsOn {
+			// Check if auto-shutdown is enabled
+			if scheduleConfig.AutoShutdown && shutdownPassword != "" && scheduleConfig.StartedBySchedule {
+				log.Println("Schedule: Server is on outside of scheduled window - attempting auto-shutdown")
+
+				// Try multiple times to shut down the server
+				var shutdownSuccessful bool
+				for attempt := 1; attempt <= 3; attempt++ {
+					log.Printf("Auto shutdown attempt %d/3", attempt)
+					err := shutdownServer(shutdownPassword)
+					if err != nil {
+						log.Printf("Auto shutdown attempt %d failed: %v", attempt, err)
+						if attempt < 3 {
+							time.Sleep(3 * time.Second)
+						}
+					} else {
+						log.Printf("Auto shutdown initiated successfully on attempt %d", attempt)
+						shutdownSuccessful = true
+						break
+					}
+				}
+
+				if !shutdownSuccessful {
+					log.Printf("All auto shutdown attempts failed")
+				}
+			} else if !scheduleConfig.StartedBySchedule {
+				// Server wasn't started by scheduler
+				log.Println("Schedule: Server is on outside of scheduled window but was not started by scheduler")
+			} else {
+				// Just log the situation when auto-shutdown is not enabled
+				log.Println("Schedule: Server is on outside of scheduled window")
+			}
+		}
+
+		// Update last run timestamp if we're exiting the window
+		// This helps track when the schedule was last active
+		currentConfig := GetScheduleConfig()
+		if currentConfig.Enabled && !shouldBeOn && currentConfig.LastRun != "" {
+			lastRun, err := time.Parse(time.RFC3339, currentConfig.LastRun)
+			if err == nil {
+				// If it's been more than a day since the last update, reset the timestamp
+				// This allows the schedule to run again based on frequency
+				if time.Since(lastRun) > 24*time.Hour {
+					log.Println("Schedule: Resetting last run timestamp for next scheduled run")
+					currentConfig.LastRun = ""
+					UpdateScheduleConfig(currentConfig)
+				}
+			}
+		}
+	}
+
+	// Use a slightly shorter interval for more responsive scheduling
+	// First check immediately at startup
+	checkScheduleOnce()
+
+	// Then set up regular checks
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	log.Println("Schedule checker started - checking every 5 seconds")
+	log.Printf("Current schedule: enabled=%v, startTime=%s, endTime=%s, frequency=%s, autoShutdown=%v",
+		scheduleConfig.Enabled, scheduleConfig.StartTime, scheduleConfig.EndTime, scheduleConfig.Frequency, scheduleConfig.AutoShutdown)
+
+	for {
+		func() {
+			// Recover from any panics that might occur in the schedule checker
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Recovered from panic in schedule checker: %v", r)
+				}
+			}()
+
+			checkScheduleOnce()
+		}()
+
+		// Wait for next tick
+		<-ticker.C
 	}
 }
